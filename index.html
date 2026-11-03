@@ -900,7 +900,7 @@ window.PHOTO_POS = {"entry": "center 35%", "puzzle": "center 60%", "hub": "cente
   var allowed = ["welcome", "entry", "puzzle", "hub", "references", "conclusion"].concat(ROOMS);
   function fromHash() {
     var id = (location.hash || "").replace(/^#\/?/, "");
-    show(allowed.indexOf(id) !== -1 ? id : "welcome");
+    show(allowed.indexOf(id) !== -1 ? id : "entry");
   }
   window.addEventListener("hashchange", fromHash);
   fromHash();
