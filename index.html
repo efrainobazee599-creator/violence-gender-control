@@ -114,6 +114,16 @@
   .qr-url { font-size: 0.95rem; color: var(--muted); word-break: break-all; margin: 0 0 0.5rem; }
   #welcome .btn-row { justify-content: center; margin-top: 1.2rem; }
 
+  /* Presenter edit mode (only in the presenter's own browser) */
+  .topnav .edit-on { background: var(--tan); border-color: var(--tan); color: var(--charcoal); }
+  .edit-banner {
+    position: sticky; top: 0; z-index: 5; display: none;
+    background: var(--tan); color: var(--charcoal); font-size: 0.9rem; text-align: center; padding: 0.4rem 16px;
+  }
+  body.editing .edit-banner { display: block; }
+  body.editing [contenteditable="true"] { outline: 1px dashed rgba(122,46,42,0.55); outline-offset: 3px; cursor: text; }
+  body.editing [contenteditable="true"]:focus { outline: 2px solid var(--red); }
+
   /* Entry */
   .entry-mark { display: flex; gap: 10px; margin-bottom: 2rem; }
   .entry-mark span { display: block; height: 10px; }
@@ -312,10 +322,13 @@
     <nav class="topnav" aria-label="Exhibit">
       <button type="button" data-go="hub" id="nav-hub">Rooms</button>
       <button type="button" data-go="references" id="nav-refs">References</button>
+      <button type="button" id="edit-toggle" hidden>Edit</button>
+      <button type="button" id="edit-reset" hidden>Undo my edits</button>
       <button type="button" class="pdf" id="save-pdf">Save as PDF</button>
     </nav>
   </div>
 </header>
+<div class="edit-banner" role="status">Editing. Click any text to change it. Changes save in this browser only.</div>
 
 <main id="main">
 
@@ -904,6 +917,89 @@ window.PHOTO_POS = {"entry": "center 35%", "puzzle": "center 60%", "hub": "cente
   }
   window.addEventListener("hashchange", fromHash);
   fromHash();
+})();
+</script>
+<script>
+/* Presenter edit mode. Opening the presenter link (#/welcome) turns it on
+   for this browser only. Edits are kept in this browser's storage and are
+   never sent anywhere, so other visitors always see the published text. */
+(function () {
+  var FLAG = "vgc-presenter", KEY = "vgc-edits";
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function drop(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+  if (/^#\/?welcome$/.test(location.hash)) save(FLAG, "1");
+  if (load(FLAG) !== "1") return;
+
+  var toggle = document.getElementById("edit-toggle");
+  var reset = document.getElementById("edit-reset");
+  toggle.hidden = false;
+
+  // Text blocks that can be edited, skipping anything inside a button or the QR code
+  var els = Array.prototype.slice.call(document.querySelectorAll(
+    "main h1, main h2, main h3, main p, main figcaption, main .label, main .note, main .refs li"
+  )).filter(function (el) {
+    return !el.closest("button, .qr-frame") && !el.querySelector("p, h1, h2, h3, ul, div, button");
+  });
+
+  function hash(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return String(h);
+  }
+  var originals = els.map(function (el) { return el.innerHTML; });
+
+  // Re-apply saved edits, but only where the published text is still the same
+  var edits = {};
+  try { edits = JSON.parse(load(KEY) || "{}") || {}; } catch (e) { edits = {}; }
+  els.forEach(function (el, i) {
+    var e = edits[i];
+    if (e && e.o === hash(originals[i])) el.innerHTML = e.h;
+  });
+  function updateReset() { reset.hidden = Object.keys(edits).length === 0; }
+  updateReset();
+
+  function store(i) {
+    var el = els[i];
+    if (el.innerHTML === originals[i]) delete edits[i];
+    else edits[i] = { o: hash(originals[i]), h: el.innerHTML };
+    save(KEY, JSON.stringify(edits));
+    updateReset();
+  }
+
+  function setEditing(on) {
+    document.body.classList.toggle("editing", on);
+    toggle.textContent = on ? "Done editing" : "Edit";
+    toggle.classList.toggle("edit-on", on);
+    toggle.setAttribute("aria-pressed", String(on));
+    els.forEach(function (el, i) {
+      if (on) { el.setAttribute("contenteditable", "true"); el.setAttribute("spellcheck", "true"); }
+      else { el.removeAttribute("contenteditable"); el.removeAttribute("spellcheck"); }
+    });
+  }
+
+  els.forEach(function (el, i) {
+    el.addEventListener("input", function () { store(i); });
+    // Paste as plain text so pasted styles don't change the page's look
+    el.addEventListener("paste", function (e) {
+      if (!document.body.classList.contains("editing")) return;
+      e.preventDefault();
+      var text = (e.clipboardData || window.clipboardData).getData("text");
+      document.execCommand("insertText", false, text);
+    });
+  });
+
+  toggle.addEventListener("click", function () {
+    setEditing(!document.body.classList.contains("editing"));
+  });
+  reset.addEventListener("click", function () {
+    if (!window.confirm("Undo all your edits and go back to the published text?")) return;
+    edits = {};
+    drop(KEY);
+    els.forEach(function (el, i) { el.innerHTML = originals[i]; });
+    updateReset();
+  });
 })();
 </script>
 </body>
