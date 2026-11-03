@@ -123,6 +123,8 @@
   body.editing .edit-banner { display: block; }
   body.editing [contenteditable="true"] { outline: 1px dashed rgba(122,46,42,0.55); outline-offset: 3px; cursor: text; }
   body.editing [contenteditable="true"]:focus { outline: 2px solid var(--red); }
+  body.editing .edit-label { outline: 1px dashed rgba(122,46,42,0.55); outline-offset: 2px; cursor: text; }
+  body.editing .card-body { display: block; }
 
   /* Entry */
   .entry-mark { display: flex; gap: 10px; margin-bottom: 2rem; }
@@ -323,12 +325,13 @@
       <button type="button" data-go="hub" id="nav-hub">Rooms</button>
       <button type="button" data-go="references" id="nav-refs">References</button>
       <button type="button" id="edit-toggle" hidden>Edit</button>
+      <button type="button" id="edit-replace" hidden>Replace word</button>
       <button type="button" id="edit-reset" hidden>Undo my edits</button>
       <button type="button" class="pdf" id="save-pdf">Save as PDF</button>
     </nav>
   </div>
 </header>
-<div class="edit-banner" role="status">Editing. Click any text to change it. Changes save in this browser only.</div>
+<div class="edit-banner" role="status">Editing: click any text to change it, including buttons. Use Rooms and References at the top to move around, or click Done editing first. Changes save in this browser only.</div>
 
 <main id="main">
 
@@ -933,15 +936,21 @@ window.PHOTO_POS = {"entry": "center 35%", "puzzle": "center 60%", "hub": "cente
   if (load(FLAG) !== "1") return;
 
   var toggle = document.getElementById("edit-toggle");
+  var replaceBtn = document.getElementById("edit-replace");
   var reset = document.getElementById("edit-reset");
   toggle.hidden = false;
 
-  // Text blocks that can be edited, skipping anything inside a button or the QR code
-  var els = Array.prototype.slice.call(document.querySelectorAll(
-    "main h1, main h2, main h3, main p, main figcaption, main .label, main .note, main .refs li"
+  // Text blocks typed into directly, skipping anything inside a button or the QR code
+  var blocks = Array.prototype.slice.call(document.querySelectorAll(
+    ".brand, main h1, main h2, main h3, main p, main figcaption, main .label, main .note, main .refs li"
   )).filter(function (el) {
     return !el.closest("button, .qr-frame") && !el.querySelector("p, h1, h2, h3, ul, div, button");
   });
+  // Button labels, renamed with a box because typing inside a button isn't reliable
+  var labels = Array.prototype.slice.call(document.querySelectorAll(
+    "main .btn, .card-toggle .t, .room-tile .num, .room-tile .name, .room-tile .src:not(#conclusion-status)"
+  ));
+  var els = blocks.concat(labels);
 
   function hash(str) {
     var h = 0;
@@ -967,32 +976,76 @@ window.PHOTO_POS = {"entry": "center 35%", "puzzle": "center 60%", "hub": "cente
     save(KEY, JSON.stringify(edits));
     updateReset();
   }
+  function editing() { return document.body.classList.contains("editing"); }
 
   function setEditing(on) {
     document.body.classList.toggle("editing", on);
     toggle.textContent = on ? "Done editing" : "Edit";
     toggle.classList.toggle("edit-on", on);
     toggle.setAttribute("aria-pressed", String(on));
-    els.forEach(function (el, i) {
+    replaceBtn.hidden = !on;
+    blocks.forEach(function (el) {
       if (on) { el.setAttribute("contenteditable", "true"); el.setAttribute("spellcheck", "true"); }
       else { el.removeAttribute("contenteditable"); el.removeAttribute("spellcheck"); }
     });
+    labels.forEach(function (el) { el.classList.toggle("edit-label", on); });
   }
 
-  els.forEach(function (el, i) {
+  blocks.forEach(function (el) {
+    var i = els.indexOf(el);
     el.addEventListener("input", function () { store(i); });
     // Paste as plain text so pasted styles don't change the page's look
     el.addEventListener("paste", function (e) {
-      if (!document.body.classList.contains("editing")) return;
+      if (!editing()) return;
       e.preventDefault();
       var text = (e.clipboardData || window.clipboardData).getData("text");
       document.execCommand("insertText", false, text);
     });
   });
 
-  toggle.addEventListener("click", function () {
-    setEditing(!document.body.classList.contains("editing"));
+  // While editing, clicking a button renames it instead of following it
+  document.addEventListener("click", function (e) {
+    if (!editing()) return;
+    var btn = e.target.closest("main button");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var label = labels.filter(function (l) { return l === btn || l.contains(e.target) && btn.contains(l); })[0];
+    if (!label) label = labels.filter(function (l) { return btn.contains(l) && l.classList.contains("name"); })[0]
+      || labels.filter(function (l) { return btn.contains(l); })[0];
+    if (!label) return;
+    var next = window.prompt("Change this text to:", label.textContent);
+    if (next === null || next === label.textContent) return;
+    label.textContent = next;
+    store(els.indexOf(label));
+  }, true);
+
+  // Replace a word everywhere, keeping a capital letter where the old word had one
+  function escapeRe(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  replaceBtn.addEventListener("click", function () {
+    var find = window.prompt("Word or phrase to replace (everywhere on the site):");
+    if (!find) return;
+    var repl = window.prompt("Replace “" + find + "” with:");
+    if (repl === null) return;
+    var re = new RegExp("\\b" + escapeRe(find) + "\\b", "gi");
+    var count = 0;
+    els.forEach(function (el, i) {
+      var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      var changed = false, node;
+      while ((node = walker.nextNode())) {
+        var out = node.nodeValue.replace(re, function (m) {
+          count++;
+          var first = m.charAt(0);
+          return first !== first.toLowerCase() ? repl.charAt(0).toUpperCase() + repl.slice(1) : repl;
+        });
+        if (out !== node.nodeValue) { node.nodeValue = out; changed = true; }
+      }
+      if (changed) store(i);
+    });
+    window.alert(count ? "Replaced " + count + (count === 1 ? " time." : " times.") : "“" + find + "” wasn’t found.");
   });
+
+  toggle.addEventListener("click", function () { setEditing(!editing()); });
   reset.addEventListener("click", function () {
     if (!window.confirm("Undo all your edits and go back to the published text?")) return;
     edits = {};
